@@ -6,7 +6,8 @@
 <title>APEX CIRCUIT</title>
 <style>
   html,body{margin:0;padding:0;overflow:hidden;background:#000;font-family:'Courier New',monospace;color:#dff3ff;}
-  canvas#glCanvas{display:block;position:fixed;inset:0;}
+  #root{position:fixed;inset:0;}
+  canvas.r3f-canvas{display:block;position:fixed;inset:0;}
   #minimapCanvas{position:fixed;right:20px;bottom:20px;width:150px;height:110px;background:rgba(0,0,0,0.5);z-index:4;border:1px solid rgba(255,255,255,0.15);}
   .overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#04141c 0%,#000 78%);z-index:10;text-align:center;padding:24px;box-sizing:border-box;overflow-y:auto;}
   .hidden{display:none!important;}
@@ -51,57 +52,31 @@
 </style>
 </head>
 <body>
-<a class="backlink" href="index.html">&larr; ARCADE HUB</a>
-<canvas id="minimapCanvas" width="150" height="110"></canvas>
-<div id="countdown" class="hidden"></div>
-<div id="hud" class="hidden">
-  <div class="tl">LAP <span id="hudLap">1</span>/3</div>
-  <div class="tr">POS <span id="hudPos">1</span>/<span id="hudTotal">6</span></div>
-  <div class="bl"><span id="hudSpeed">0</span> <span style="font-size:14px;">MPH</span></div>
-</div>
-
-<div class="overlay" id="titleScreen">
-  <h1>APEX CIRCUIT</h1>
-  <p class="info">
-    A 3D arcade racer in the spirit of the PS1 classics, chase-cam and all.<br><br>
-    <span class="key">W</span> accelerate &nbsp; <span class="key">S</span> brake / reverse &nbsp; <span class="key">A</span> <span class="key">D</span> steer<br><br>
-    Pick a car, pick a circuit, pick your rivals' skill &mdash; then win the race.
-  </p>
-  <div class="row"><button id="toCarSelect">START</button></div>
-</div>
-
-<div class="overlay hidden" id="carSelectScreen">
-  <h2>SELECT YOUR CAR</h2>
-  <div class="grid" id="carGrid"></div>
-  <div class="row"><button id="toTrackSelect" disabled>NEXT &rarr;</button></div>
-</div>
-
-<div class="overlay hidden" id="trackSelectScreen">
-  <h2>SELECT CIRCUIT</h2>
-  <div class="row" id="trackGrid"></div>
-  <div class="row"><button id="toDifficultySelect" disabled>NEXT &rarr;</button></div>
-</div>
-
-<div class="overlay hidden" id="difficultyScreen">
-  <h2>SELECT OPPONENT SKILL</h2>
-  <div class="row" id="diffGrid"></div>
-</div>
-
-<div class="overlay hidden" id="resultsScreen">
-  <h2>RACE RESULTS</h2>
-  <table id="resultsTable"></table>
-  <div class="row">
-    <button id="raceAgainBtn">RACE AGAIN</button>
-    <button id="changeSetupBtn">CHANGE SETUP</button>
-  </div>
-</div>
+<div id="root"></div>
 
 <script type="importmap">
-{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?external=react",
+    "three": "https://esm.sh/three@0.160.0",
+    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.17.10?external=react,three",
+    "htm": "https://esm.sh/htm@3.1.1"
+  }
+}
 </script>
 <script type="module">
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createRoot } from 'react-dom/client';
 import * as THREE from 'three';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import htm from 'htm';
 
+const html = htm.bind(React.createElement);
+
+/* ================= constants ================= */
 const LAPS_TOTAL = 3;
 const AI_COUNT = 5;
 
@@ -262,36 +237,7 @@ function makeRimTexture(){
 }
 const rimTexture = makeRimTexture();
 
-/* ---------------- renderer / scene / camera ---------------- */
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x8fd0f0);
-scene.fog = new THREE.Fog(0x8fd0f0, 120, 420);
-
-const camera = new THREE.PerspectiveCamera(68, window.innerWidth/window.innerHeight, 0.1, 600);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.domElement.id = 'glCanvas';
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-document.body.appendChild(renderer.domElement);
-
-function resizeRenderer(){
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  camera.aspect = window.innerWidth/window.innerHeight;
-  camera.updateProjectionMatrix();
-}
-window.addEventListener('resize', resizeRenderer);
-resizeRenderer();
-
-scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x2c5a1f, 0.9));
-const sun = new THREE.DirectionalLight(0xfff3d6, 2.6);
-sun.position.set(120, 180, 80);
-scene.add(sun);
-scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400,1400), new THREE.MeshStandardMaterial({ map:grassTexture, roughness:1 }));
-ground.rotation.x = -Math.PI/2;
-scene.add(ground);
-
-/* ---------------- track meshes ---------------- */
+/* ---------------- mesh builders (plain Three.js, mounted via <primitive>) ---------------- */
 function buildTrackMesh(track){
   const N = track.n;
   const positions=[], uvs=[], indices=[];
@@ -366,18 +312,15 @@ function buildFinishLine(track){
   return mesh;
 }
 
-let trackGroup = null;
-function mountTrack(track){
-  if(trackGroup) scene.remove(trackGroup);
-  trackGroup = new THREE.Group();
-  trackGroup.add(buildTrackMesh(track));
-  trackGroup.add(buildCurbMesh(track.left, track));
-  trackGroup.add(buildCurbMesh(track.right, track));
-  trackGroup.add(buildFinishLine(track));
-  scene.add(trackGroup);
+function buildTrackGroup(track){
+  const g = new THREE.Group();
+  g.add(buildTrackMesh(track));
+  g.add(buildCurbMesh(track.left, track));
+  g.add(buildCurbMesh(track.right, track));
+  g.add(buildFinishLine(track));
+  return g;
 }
 
-/* ---------------- car model ---------------- */
 const CAR_PROFILE = [
   [-3.8,0.35],[-3.8,0.75],[-3.0,0.95],[-1.6,1.15],[-0.8,1.25],
   [0.6,1.25],[1.3,1.0],[2.4,0.55],[3.4,0.45],[3.8,0.4],
@@ -436,7 +379,14 @@ function buildCarMesh(color){
   return { group, wheels, bodyMat };
 }
 
-/* ---------------- physics ---------------- */
+function disposeBuilt(built){
+  built.group.traverse(o => {
+    if(o.geometry) o.geometry.dispose();
+    if(o.material) o.material.dispose();
+  });
+}
+
+/* ---------------- physics (pure functions, unchanged whether driven by rAF or useFrame) ---------------- */
 function updateCarPhysics(car, throttle, brakeReverse, steer, delta, onTrack, turnRateMul){
   turnRateMul = turnRateMul || 1;
   car.steerVisual = steer;
@@ -457,9 +407,22 @@ function updateCarPhysics(car, throttle, brakeReverse, steer, delta, onTrack, tu
   car.z += Math.sin(car.angle)*car.speed*delta;
 }
 
-function nearestIndex(track, pos){
-  let bestI=0, bestD=Infinity;
-  for(let i=0;i<track.n;i++){
+function nearestIndex(track, pos, hint){
+  const N = track.n;
+  if(hint == null){
+    let bestI=0, bestD=Infinity;
+    for(let i=0;i<N;i++){
+      const p=track.points[i];
+      const dx=p.x-pos.x, dz=p.z-pos.z;
+      const d=dx*dx+dz*dz;
+      if(d<bestD){ bestD=d; bestI=i; }
+    }
+    return { index:bestI, dist:Math.sqrt(bestD) };
+  }
+  const window = 30;
+  let bestI=hint, bestD=Infinity;
+  for(let o=-window;o<=window;o++){
+    const i = ((hint+o)%N+N)%N;
     const p=track.points[i];
     const dx=p.x-pos.x, dz=p.z-pos.z;
     const d=dx*dx+dz*dz;
@@ -508,58 +471,276 @@ function resolveCarCollisions(cars){
   }
 }
 
-/* ---------------- keyboard ---------------- */
-const keys = {};
-window.addEventListener('keydown', e => { keys[e.code]=true; });
-window.addEventListener('keyup',   e => { keys[e.code]=false; });
-
-/* ---------------- state ---------------- */
-let gameState = 'menu';
-let selectedCarIdx = null;
-let selectedTrackIdx = null;
-let selectedDifficulty = null;
-let track = null;
-let cars = [];
-let camState = { x:0, y:5, z:20, angle:0 };
-let countdownTimer = 0;
-let raceTime = 0;
-
-/* ---------------- screens ---------------- */
-const titleScreen = document.getElementById('titleScreen');
-const carSelectScreen = document.getElementById('carSelectScreen');
-const trackSelectScreen = document.getElementById('trackSelectScreen');
-const difficultyScreen = document.getElementById('difficultyScreen');
-const resultsScreen = document.getElementById('resultsScreen');
-const hud = document.getElementById('hud');
-const countdownEl = document.getElementById('countdown');
-
-function showOnly(el){
-  [titleScreen,carSelectScreen,trackSelectScreen,difficultyScreen,resultsScreen].forEach(s => s.classList.add('hidden'));
-  if(el) el.classList.remove('hidden');
+function formatTime(t){
+  const m = Math.floor(t/60);
+  const s = (t%60).toFixed(1).padStart(4,'0');
+  return `${m}:${s}`;
 }
 
-/* ---- car select ---- */
-const carGrid = document.getElementById('carGrid');
-ROSTER.forEach((c,i) => {
-  const div = document.createElement('div');
-  div.className = 'cardbtn';
-  div.innerHTML = `
-    <div class="name" style="color:${c.color}">${c.name}</div>
-    <div class="cls">${c.cls}</div>
-    <div class="statrow"><span class="label">SPEED</span><div class="statbar"><div class="fill" style="width:${c.speed*20}%"></div></div></div>
-    <div class="statrow"><span class="label">ACCEL</span><div class="statbar"><div class="fill" style="width:${c.accel*20}%"></div></div></div>
-    <div class="statrow"><span class="label">HANDLING</span><div class="statbar"><div class="fill" style="width:${c.handling*20}%"></div></div></div>
-  `;
-  div.addEventListener('click', () => {
-    selectedCarIdx = i;
-    [...carGrid.children].forEach(ch=>ch.classList.remove('selected'));
-    div.classList.add('selected');
-    document.getElementById('toTrackSelect').disabled = false;
-  });
-  carGrid.appendChild(div);
-});
+function makeCarObjects(track){
+  return {
+    idx: 0,
+    build(carDef, gridIndex){
+      const N = track.n;
+      const row = Math.floor(gridIndex/2);
+      const side = (gridIndex%2===0) ? 1 : -1;
+      const idx = ((0 - row*4) % N + N) % N;
+      const p = track.points[idx];
+      const next = track.points[(idx+1)%N];
+      const tx=next.x-p.x, tz=next.z-p.z, tl=Math.hypot(tx,tz)||1;
+      const nx=-tz/tl, nz=tx/tl;
+      return Object.assign({}, carDef, {
+        x: p.x + nx*side*(track.width*0.22),
+        z: p.z + nz*side*(track.width*0.22),
+        angle: Math.atan2(tz,tx),
+        speed: 0, lap: 0, lastIndex: idx, trackIndex: idx, progress: 0,
+        finished: false, finishTime: null, worldY: p.y, renderY: p.y,
+      });
+    },
+  };
+}
 
-/* ---- track select (flat 2D preview thumbnails) ---- */
+/* ================= R3F scene components ================= */
+
+function TrackMesh({ track }){
+  const group = useMemo(() => buildTrackGroup(track), [track]);
+  useEffect(() => () => { group.traverse(o => { if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); }); }, [group]);
+  return html`<primitive object=${group} />`;
+}
+
+function Ground(){
+  const mesh = useMemo(() => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1400,1400), new THREE.MeshStandardMaterial({ map:grassTexture, roughness:1 }));
+    m.rotation.x = -Math.PI/2;
+    return m;
+  }, []);
+  return html`<primitive object=${mesh} />`;
+}
+
+function CarModel({ color, onReady }){
+  const built = useMemo(() => buildCarMesh(color), [color]);
+  useEffect(() => {
+    onReady(built);
+    return () => disposeBuilt(built);
+  }, [built]);
+  return html`<primitive object=${built.group} />`;
+}
+
+function RaceWorld({ carEntry, track, difficulty, onFinish, hudRefs, minimapCanvasRef }){
+  const { camera } = useThree();
+  const carsRef = useRef(null);
+  const meshRefs = useRef([]);
+  const phaseRef = useRef('countdown');
+  const countdownRef = useRef(3.999);
+  const raceTimeRef = useRef(0);
+  const camStateRef = useRef({ x:0, y:5, z:20, angle:0 });
+  const keysRef = useRef({});
+  const finishedRef = useRef(false);
+
+  // Computed once (not in an effect) so the AI roster/colors are known during the
+  // very first render -- CarModel reads car.color synchronously for its paint texture,
+  // and it must match the same car object the physics loop drives.
+  const carDefs = useMemo(() => {
+    const player = Object.assign({ isPlayer:true, name:ROSTER[carEntry.playerIdx].name, color:ROSTER[carEntry.playerIdx].color }, statsFor(ROSTER[carEntry.playerIdx]));
+    const pool = ROSTER.filter((_,i) => i !== carEntry.playerIdx).sort(() => Math.random()-0.5);
+    const aiCars = [];
+    for(let i=0;i<AI_COUNT;i++){
+      const entry = pool[i % pool.length];
+      aiCars.push(Object.assign({ isPlayer:false, name:entry.name, color:entry.color, seed: Math.random()*100 }, statsFor(entry)));
+    }
+    return [player, ...aiCars];
+  }, []);
+
+  useEffect(() => {
+    if(!carsRef.current){
+      const factory = makeCarObjects(track);
+      carsRef.current = carDefs.map((def, i) => factory.build(def, i));
+      const player = carsRef.current[0];
+      camStateRef.current.x = player.x; camStateRef.current.z = player.z; camStateRef.current.angle = player.angle;
+    }
+  }, []);
+
+  useEffect(() => {
+    const onDown = e => { keysRef.current[e.code] = true; };
+    const onUp = e => { keysRef.current[e.code] = false; };
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+    return () => { window.removeEventListener('keydown', onDown); window.removeEventListener('keyup', onUp); };
+  }, []);
+
+  useFrame((state, rawDelta) => {
+    const cars = carsRef.current;
+    if(!cars) return;
+    const delta = Math.min(rawDelta, 0.1);
+    const keys = keysRef.current;
+
+    if(phaseRef.current === 'countdown'){
+      countdownRef.current -= delta;
+      const countdownEl = hudRefs.current.countdownEl;
+      if(countdownRef.current > 0){
+        if(countdownEl) countdownEl.textContent = String(Math.ceil(countdownRef.current));
+      } else if(countdownRef.current > -1){
+        if(countdownEl) countdownEl.textContent = 'GO!';
+      } else {
+        if(countdownEl) countdownEl.classList.add('hidden');
+        phaseRef.current = 'racing';
+      }
+    }
+
+    const racing = phaseRef.current === 'racing';
+    if(racing) raceTimeRef.current += delta;
+
+    cars.forEach((car, ci) => {
+      const { index, dist } = nearestIndex(track, car, car.trackIndex);
+      car.trackIndex = index;
+      const onTrack = dist <= track.width/2;
+      car.worldY = track.points[index].y;
+
+      if(racing){
+        if(car.isPlayer){
+          const throttle = !!keys['KeyW'];
+          const brakeReverse = !!keys['KeyS'];
+          const steer = (keys['KeyD']?1:0) - (keys['KeyA']?1:0);
+          updateCarPhysics(car, throttle, brakeReverse, steer, delta, onTrack);
+        } else {
+          const decision = updateAI(car, track, difficulty, delta, state.clock.elapsedTime, index);
+          updateCarPhysics(car, decision.throttle, decision.brakeReverse, decision.steer, delta, onTrack, difficulty.turnRateMul);
+        }
+
+        if(!car.finished){
+          if(car.lastIndex - index > track.n*0.6){
+            car.lap++;
+            if(car.lap>=LAPS_TOTAL){ car.finished=true; car.finishTime=raceTimeRef.current; }
+          }
+          car.lastIndex = index;
+          car.progress = car.lap*track.length + track.cum[index];
+        }
+      }
+
+      const mesh = meshRefs.current[ci];
+      if(mesh){
+        car.renderY += (car.worldY - car.renderY) * Math.min(1, delta*10);
+        mesh.group.position.set(car.x, car.renderY, car.z);
+        mesh.group.rotation.y = -car.angle;
+        const spinDelta = -(car.speed/0.55)*delta;
+        mesh.wheels.forEach(w => {
+          w.spin.rotation.x += spinDelta;
+          if(w.front) w.pivot.rotation.y = (car.steerVisual||0) * 0.4;
+        });
+      }
+    });
+
+    if(racing) resolveCarCollisions(cars);
+
+    const player = cars[0];
+    const camState = camStateRef.current;
+    camState.angle += normalizeAngle(player.angle-camState.angle) * Math.min(1, delta*4);
+    const chaseDist = 9, chaseHeight = 3.4, lookAheadDist = 7;
+    const fx = Math.cos(camState.angle), fz = Math.sin(camState.angle);
+    camState.x += (player.x - fx*chaseDist - camState.x) * Math.min(1, delta*6);
+    camState.z += (player.z - fz*chaseDist - camState.z) * Math.min(1, delta*6);
+    camState.y += (player.worldY + chaseHeight - camState.y) * Math.min(1, delta*6);
+    camera.position.set(camState.x, camState.y, camState.z);
+    camera.lookAt(player.x + fx*lookAheadDist, player.worldY+1.1, player.z + fz*lookAheadDist);
+
+    if(racing && hudRefs.current){
+      const standings = [...cars].sort((a,b) => b.progress - a.progress);
+      const pos = standings.indexOf(player)+1;
+      if(hudRefs.current.lapEl) hudRefs.current.lapEl.textContent = Math.min(player.lap+1, LAPS_TOTAL);
+      if(hudRefs.current.posEl) hudRefs.current.posEl.textContent = pos;
+      if(hudRefs.current.speedEl) hudRefs.current.speedEl.textContent = Math.max(0, Math.round(Math.abs(player.speed)*1.15));
+    }
+
+    if(minimapCanvasRef.current){
+      const c = minimapCanvasRef.current;
+      const mctx = c.getContext('2d');
+      const w=150, h=110;
+      mctx.clearRect(0,0,w,h);
+      const bb=track.bbox;
+      const s = Math.min(w/(bb.maxX-bb.minX), h/(bb.maxZ-bb.minZ))*0.9;
+      const cx=w/2, cy=h/2;
+      const midX=(bb.minX+bb.maxX)/2, midZ=(bb.minZ+bb.maxZ)/2;
+      mctx.strokeStyle='#888'; mctx.lineWidth=2;
+      mctx.beginPath();
+      track.points.forEach((p,i)=>{
+        const x=cx+(p.x-midX)*s, y=cy+(p.z-midZ)*s;
+        if(i===0) mctx.moveTo(x,y); else mctx.lineTo(x,y);
+      });
+      mctx.closePath(); mctx.stroke();
+      cars.forEach(c2 => {
+        const x=cx+(c2.x-midX)*s, y=cy+(c2.z-midZ)*s;
+        mctx.fillStyle = c2.isPlayer ? '#5bd6ff' : '#ff5555';
+        mctx.beginPath(); mctx.arc(x,y,c2.isPlayer?3.2:2.2,0,Math.PI*2); mctx.fill();
+      });
+    }
+
+    if(racing && player.finished && !finishedRef.current){
+      finishedRef.current = true;
+      const standings = [...cars].sort((a,b) => b.progress - a.progress);
+      onFinish(standings.map(c => ({ name:c.name, isPlayer:c.isPlayer, finishTime:c.finishTime })));
+    }
+  });
+
+  return html`
+    <${Ground} />
+    <hemisphereLight args=${[0xbfe3ff, 0x2c5a1f, 0.9]} />
+    <directionalLight color=${0xfff3d6} intensity=${2.6} position=${[120,180,80]} />
+    <ambientLight intensity=${0.35} />
+    <${TrackMesh} track=${track} />
+    ${carDefs.map((def,i) => html`
+      <${CarModel} key=${i} color=${def.color} onReady=${(built) => { meshRefs.current[i] = built; }} />
+    `)}
+  `;
+}
+
+/* ================= HUD / minimap DOM (siblings of the canvas) ================= */
+function RaceOverlay({ hudRefs, minimapCanvasRef }){
+  return html`
+    <div id="hud">
+      <div class="tl">LAP <span ref=${el => hudRefs.current.lapEl = el}>1</span>/3</div>
+      <div class="tr">POS <span ref=${el => hudRefs.current.posEl = el}>1</span>/${1+AI_COUNT}</div>
+      <div class="bl"><span ref=${el => hudRefs.current.speedEl = el}>0</span> <span style=${{fontSize:'14px'}}>MPH</span></div>
+    </div>
+    <div id="countdown" ref=${el => hudRefs.current.countdownEl = el}>3</div>
+    <canvas id="minimapCanvas" width="150" height="110" ref=${minimapCanvasRef}></canvas>
+  `;
+}
+
+/* ================= menu screens ================= */
+function TitleScreen({ onStart }){
+  return html`
+    <div class="overlay">
+      <h1>APEX CIRCUIT</h1>
+      <p class="info">
+        A 3D arcade racer in the spirit of the PS1 classics, chase-cam and all.<br/><br/>
+        <span class="key">W</span> accelerate   <span class="key">S</span> brake / reverse   <span class="key">A</span> <span class="key">D</span> steer<br/><br/>
+        Pick a car, pick a circuit, pick your rivals' skill — then win the race.
+      </p>
+      <div class="row"><button onClick=${onStart}>START</button></div>
+    </div>
+  `;
+}
+
+function CarSelectScreen({ selected, onSelect, onNext }){
+  return html`
+    <div class="overlay">
+      <h2>SELECT YOUR CAR</h2>
+      <div class="grid">
+        ${ROSTER.map((c,i) => html`
+          <div key=${i} class=${'cardbtn' + (selected===i?' selected':'')} onClick=${() => onSelect(i)}>
+            <div class="name" style=${{color:c.color}}>${c.name}</div>
+            <div class="cls">${c.cls}</div>
+            <div class="statrow"><span class="label">SPEED</span><div class="statbar"><div class="fill" style=${{width:c.speed*20+'%'}}></div></div></div>
+            <div class="statrow"><span class="label">ACCEL</span><div class="statbar"><div class="fill" style=${{width:c.accel*20+'%'}}></div></div></div>
+            <div class="statrow"><span class="label">HANDLING</span><div class="statbar"><div class="fill" style=${{width:c.handling*20+'%'}}></div></div></div>
+          </div>
+        `)}
+      </div>
+      <div class="row"><button disabled=${selected==null} onClick=${onNext}>NEXT →</button></div>
+    </div>
+  `;
+}
+
 function drawTrackPreview(pctx, trk, w, h){
   pctx.clearRect(0,0,w,h);
   pctx.fillStyle='#0a2a12'; pctx.fillRect(0,0,w,h);
@@ -579,249 +760,107 @@ function drawTrackPreview(pctx, trk, w, h){
   pctx.beginPath(); pctx.arc(cx+(p0.x-midX)*s, cy+(p0.z-midZ)*s, 4, 0, Math.PI*2); pctx.fill();
 }
 
-const trackGrid = document.getElementById('trackGrid');
-TRACKS.forEach((t,i) => {
-  const div = document.createElement('div');
-  div.className = 'trackCard';
-  div.innerHTML = `<canvas width="260" height="150"></canvas><div class="name">${t.name}</div><div class="meta">Length ~${Math.round(t.length)}m &middot; Width ${t.width}m</div>`;
-  div.addEventListener('click', () => {
-    selectedTrackIdx = i;
-    [...trackGrid.children].forEach(ch=>ch.classList.remove('selected'));
-    div.classList.add('selected');
-    document.getElementById('toDifficultySelect').disabled = false;
-  });
-  trackGrid.appendChild(div);
-  drawTrackPreview(div.querySelector('canvas').getContext('2d'), t, 260, 150);
-});
-
-/* ---- difficulty select ---- */
-const diffGrid = document.getElementById('diffGrid');
-Object.keys(DIFFICULTIES).forEach(key => {
-  const d = DIFFICULTIES[key];
-  const div = document.createElement('div');
-  div.className = 'diffCard';
-  div.innerHTML = `<div class="name">${d.label}</div><div class="desc">${d.desc}</div>`;
-  div.addEventListener('click', () => {
-    selectedDifficulty = key;
-    startCountdown();
-  });
-  diffGrid.appendChild(div);
-});
-
-/* ---- navigation ---- */
-document.getElementById('toCarSelect').addEventListener('click', () => showOnly(carSelectScreen));
-document.getElementById('toTrackSelect').addEventListener('click', () => showOnly(trackSelectScreen));
-document.getElementById('toDifficultySelect').addEventListener('click', () => showOnly(difficultyScreen));
-document.getElementById('changeSetupBtn').addEventListener('click', () => showOnly(carSelectScreen));
-document.getElementById('raceAgainBtn').addEventListener('click', () => startCountdown());
-
-/* ---------------- race setup ---------------- */
-let carMeshes = []; // { mesh3d, wheels, bodyMat } aligned with cars[]
-
-function initRace(){
-  track = TRACKS[selectedTrackIdx];
-  mountTrack(track);
-
-  carMeshes.forEach(cm => scene.remove(cm.group));
-  carMeshes = [];
-  cars = [];
-
-  const playerEntry = ROSTER[selectedCarIdx];
-  const player = Object.assign({ isPlayer:true, name:playerEntry.name, color:playerEntry.color }, statsFor(playerEntry));
-  cars.push(player);
-
-  const pool = ROSTER.filter((_,i) => i !== selectedCarIdx).sort(() => Math.random()-0.5);
-  for(let i=0;i<AI_COUNT;i++){
-    const entry = pool[i % pool.length];
-    const ai = Object.assign({ isPlayer:false, name:entry.name, color:entry.color, seed: Math.random()*100 }, statsFor(entry));
-    cars.push(ai);
-  }
-
-  const N = track.n;
-  cars.forEach((car,i) => {
-    const row = Math.floor(i/2);
-    const side = (i%2===0) ? 1 : -1;
-    const idx = ((0 - row*4) % N + N) % N;
-    const p = track.points[idx];
-    const next = track.points[(idx+1)%N];
-    const tx=next.x-p.x, tz=next.z-p.z, tl=Math.hypot(tx,tz)||1;
-    const nx=-tz/tl, nz=tx/tl;
-    car.x = p.x + nx*side*(track.width*0.22);
-    car.z = p.z + nz*side*(track.width*0.22);
-    car.angle = Math.atan2(tz,tx);
-    car.speed = 0;
-    car.lap = 0;
-    car.lastIndex = idx;
-    car.progress = 0;
-    car.finished = false;
-    car.finishTime = null;
-    car.worldY = p.y;
-
-    const built = buildCarMesh(car.color);
-    scene.add(built.group);
-    carMeshes.push(built);
-  });
-
-  camState.x = cars[0].x; camState.z = cars[0].z; camState.angle = cars[0].angle;
-  raceTime = 0;
+function TrackCard({ track, selected, onSelect }){
+  const canvasRef = useRef(null);
+  useEffect(() => { if(canvasRef.current) drawTrackPreview(canvasRef.current.getContext('2d'), track, 260, 150); }, []);
+  return html`
+    <div class=${'trackCard' + (selected?' selected':'')} onClick=${onSelect}>
+      <canvas width="260" height="150" ref=${canvasRef}></canvas>
+      <div class="name">${track.name}</div>
+      <div class="meta">Length ~${Math.round(track.length)}m · Width ${track.width}m</div>
+    </div>
+  `;
 }
 
-function startCountdown(){
-  initRace();
-  showOnly(null);
-  hud.classList.remove('hidden');
-  countdownEl.classList.remove('hidden');
-  document.getElementById('hudTotal').textContent = cars.length;
-  gameState = 'countdown';
-  countdownTimer = 3.999;
+function TrackSelectScreen({ selected, onSelect, onNext }){
+  return html`
+    <div class="overlay">
+      <h2>SELECT CIRCUIT</h2>
+      <div class="row">
+        ${TRACKS.map((t,i) => html`<${TrackCard} key=${i} track=${t} selected=${selected===i} onSelect=${() => onSelect(i)} />`)}
+      </div>
+      <div class="row"><button disabled=${selected==null} onClick=${onNext}>NEXT →</button></div>
+    </div>
+  `;
 }
 
-/* ---------------- HUD ---------------- */
-function computeStandings(){
-  return [...cars].sort((a,b) => b.progress - a.progress);
+function DifficultyScreen({ onSelect }){
+  return html`
+    <div class="overlay">
+      <h2>SELECT OPPONENT SKILL</h2>
+      <div class="row">
+        ${Object.keys(DIFFICULTIES).map(key => html`
+          <div key=${key} class="diffCard" onClick=${() => onSelect(key)}>
+            <div class="name">${DIFFICULTIES[key].label}</div>
+            <div class="desc">${DIFFICULTIES[key].desc}</div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
 }
 
-function updateHUD(){
-  const player = cars[0];
-  document.getElementById('hudLap').textContent = Math.min(player.lap+1, LAPS_TOTAL);
-  const standings = computeStandings();
-  const pos = standings.indexOf(player)+1;
-  document.getElementById('hudPos').textContent = pos;
-  document.getElementById('hudSpeed').textContent = Math.max(0, Math.round(Math.abs(player.speed)*1.15));
+function ResultsScreen({ standings, onRaceAgain, onChangeSetup }){
+  return html`
+    <div class="overlay">
+      <h2>RACE RESULTS</h2>
+      <table>
+        <tr><th>POS</th><th>DRIVER</th><th>TIME</th></tr>
+        ${standings.map((c,i) => html`
+          <tr key=${i} class=${c.isPlayer?'you':''}>
+            <td>${i+1}</td><td>${c.name}${c.isPlayer?' (YOU)':''}</td><td>${c.finishTime!=null?formatTime(c.finishTime):'—'}</td>
+          </tr>
+        `)}
+      </table>
+      <div class="row">
+        <button onClick=${onRaceAgain}>RACE AGAIN</button>
+        <button onClick=${onChangeSetup}>CHANGE SETUP</button>
+      </div>
+    </div>
+  `;
 }
 
-function showResults(){
-  gameState = 'results';
-  hud.classList.add('hidden');
-  const standings = computeStandings();
-  let html = '<tr><th>POS</th><th>DRIVER</th><th>TIME</th></tr>';
-  standings.forEach((c,i) => {
-    const time = c.finishTime!=null ? formatTime(c.finishTime) : '—';
-    html += `<tr class="${c.isPlayer?'you':''}"><td>${i+1}</td><td>${c.name}${c.isPlayer?' (YOU)':''}</td><td>${time}</td></tr>`;
-  });
-  document.getElementById('resultsTable').innerHTML = html;
-  showOnly(resultsScreen);
+/* ================= App ================= */
+function App(){
+  const [screen, setScreen] = useState('title');
+  const [carIdx, setCarIdx] = useState(null);
+  const [trackIdx, setTrackIdx] = useState(null);
+  const [difficultyKey, setDifficultyKey] = useState(null);
+  const [standings, setStandings] = useState([]);
+  const [raceKey, setRaceKey] = useState(0);
+
+  const hudRefs = useRef({});
+  const minimapCanvasRef = useRef(null);
+
+  const racing = screen === 'race';
+
+  return html`
+    <a class="backlink" href="index.html">← ARCADE HUB</a>
+    ${racing && html`
+      <${Canvas} className="r3f-canvas" camera=${{ fov:68, near:0.1, far:600, position:[0,5,20] }}>
+        <color attach="background" args=${[0x8fd0f0]} />
+        <fog attach="fog" args=${[0x8fd0f0, 120, 420]} />
+        <${RaceWorld}
+          key=${raceKey}
+          carEntry=${{ playerIdx: carIdx }}
+          track=${TRACKS[trackIdx]}
+          difficulty=${DIFFICULTIES[difficultyKey]}
+          hudRefs=${hudRefs}
+          minimapCanvasRef=${minimapCanvasRef}
+          onFinish=${(finalStandings) => { setStandings(finalStandings); setScreen('results'); }}
+        />
+      <//>
+      <${RaceOverlay} hudRefs=${hudRefs} minimapCanvasRef=${minimapCanvasRef} />
+    `}
+    ${screen==='title' && html`<${TitleScreen} onStart=${() => setScreen('carSelect')} />`}
+    ${screen==='carSelect' && html`<${CarSelectScreen} selected=${carIdx} onSelect=${setCarIdx} onNext=${() => setScreen('trackSelect')} />`}
+    ${screen==='trackSelect' && html`<${TrackSelectScreen} selected=${trackIdx} onSelect=${setTrackIdx} onNext=${() => setScreen('difficultySelect')} />`}
+    ${screen==='difficultySelect' && html`<${DifficultyScreen} onSelect=${(key) => { setDifficultyKey(key); setRaceKey(k=>k+1); setScreen('race'); }} />`}
+    ${screen==='results' && html`<${ResultsScreen} standings=${standings} onRaceAgain=${() => { setRaceKey(k=>k+1); setScreen('race'); }} onChangeSetup=${() => setScreen('carSelect')} />`}
+  `;
 }
 
-function formatTime(t){
-  const m = Math.floor(t/60);
-  const s = (t%60).toFixed(1).padStart(4,'0');
-  return `${m}:${s}`;
-}
-
-/* ---------------- minimap (separate 2D canvas) ---------------- */
-const minimapCanvas = document.getElementById('minimapCanvas');
-const mctx = minimapCanvas.getContext('2d');
-function drawMinimap(){
-  const w=150, h=110;
-  mctx.clearRect(0,0,w,h);
-  if(!track) return;
-  const bb=track.bbox;
-  const s = Math.min(w/(bb.maxX-bb.minX), h/(bb.maxZ-bb.minZ))*0.9;
-  const cx=w/2, cy=h/2;
-  const midX=(bb.minX+bb.maxX)/2, midZ=(bb.minZ+bb.maxZ)/2;
-  mctx.strokeStyle='#888'; mctx.lineWidth=2;
-  mctx.beginPath();
-  track.points.forEach((p,i)=>{
-    const x=cx+(p.x-midX)*s, y=cy+(p.z-midZ)*s;
-    if(i===0) mctx.moveTo(x,y); else mctx.lineTo(x,y);
-  });
-  mctx.closePath(); mctx.stroke();
-  cars.forEach(c => {
-    const x=cx+(c.x-midX)*s, y=cy+(c.z-midZ)*s;
-    mctx.fillStyle = c.isPlayer ? '#5bd6ff' : '#ff5555';
-    mctx.beginPath(); mctx.arc(x,y,c.isPlayer?3.2:2.2,0,Math.PI*2); mctx.fill();
-  });
-}
-
-/* ---------------- camera ---------------- */
-function updateCamera(delta){
-  const player = cars[0];
-  if(!player) return;
-  camState.angle += normalizeAngle(player.angle-camState.angle) * Math.min(1, delta*4);
-  const chaseDist = 9, chaseHeight = 3.4, lookAheadDist = 7;
-  const fx = Math.cos(camState.angle), fz = Math.sin(camState.angle);
-  const desiredX = player.x - fx*chaseDist;
-  const desiredZ = player.z - fz*chaseDist;
-  const desiredY = player.worldY + chaseHeight;
-  camState.x += (desiredX-camState.x) * Math.min(1, delta*6);
-  camState.z += (desiredZ-camState.z) * Math.min(1, delta*6);
-  camState.y += (desiredY-camState.y) * Math.min(1, delta*6);
-  camera.position.set(camState.x, camState.y, camState.z);
-  camera.lookAt(player.x + fx*lookAheadDist, player.worldY+1.1, player.z + fz*lookAheadDist);
-}
-
-/* ---------------- main loop ---------------- */
-let lastTime = performance.now();
-function loop(now){
-  requestAnimationFrame(loop);
-  const delta = Math.min((now-lastTime)/1000, 0.1);
-  lastTime = now;
-  const time = now/1000;
-
-  if(gameState==='countdown'){
-    countdownTimer -= delta;
-    if(countdownTimer > 0) countdownEl.textContent = Math.ceil(countdownTimer);
-    else if(countdownTimer > -1) countdownEl.textContent = 'GO!';
-    else { countdownEl.classList.add('hidden'); gameState = 'racing'; }
-  }
-
-  if(gameState==='racing' || gameState==='countdown'){
-    raceTime += (gameState==='racing') ? delta : 0;
-
-    cars.forEach((car,ci) => {
-      const { index, dist } = nearestIndex(track, car);
-      const onTrack = dist <= track.width/2;
-      car.worldY = track.points[index].y;
-
-      if(gameState==='racing'){
-        if(car.isPlayer){
-          const throttle = !!keys['KeyW'];
-          const brakeReverse = !!keys['KeyS'];
-          const steer = (keys['KeyD']?1:0) - (keys['KeyA']?1:0);
-          updateCarPhysics(car, throttle, brakeReverse, steer, delta, onTrack);
-        } else {
-          const diff = DIFFICULTIES[selectedDifficulty];
-          const decision = updateAI(car, track, diff, delta, time, index);
-          updateCarPhysics(car, decision.throttle, decision.brakeReverse, decision.steer, delta, onTrack, diff.turnRateMul);
-        }
-
-        if(!car.finished){
-          if(car.lastIndex - index > track.n*0.6){
-            car.lap++;
-            if(car.lap>=LAPS_TOTAL){ car.finished=true; car.finishTime=raceTime; }
-          }
-          car.lastIndex = index;
-          car.progress = car.lap*track.length + track.cum[index];
-        }
-      }
-
-      const cm = carMeshes[ci];
-      if(cm){
-        cm.group.position.set(car.x, car.worldY, car.z);
-        cm.group.rotation.y = -car.angle;
-        const spinDelta = -(car.speed/0.55)*delta;
-        cm.wheels.forEach(w => {
-          w.spin.rotation.z += spinDelta;
-          if(w.front) w.pivot.rotation.y = (car.steerVisual||0) * 0.4;
-        });
-      }
-    });
-
-    if(gameState==='racing') resolveCarCollisions(cars);
-
-    updateCamera(delta);
-
-    if(gameState==='racing'){
-      updateHUD();
-      if(cars[0].finished) showResults();
-    }
-  }
-
-  drawMinimap();
-  renderer.render(scene, camera);
-}
-requestAnimationFrame(loop);
+createRoot(document.getElementById('root')).render(html`<${App} />`);
 </script>
 </body>
 </html>
