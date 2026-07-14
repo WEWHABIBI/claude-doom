@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TETRIS</title>
+<style>
+  html,body{margin:0;padding:0;min-height:100vh;background:#000;font-family:'Courier New',monospace;color:#e8c96a;}
+  body{
+    background:radial-gradient(ellipse at center,#0a0520 0%,#000 75%);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:30px 20px;box-sizing:border-box;
+  }
+  h1{font-size:min(9vw,48px);letter-spacing:12px;color:#b967ff;text-shadow:0 0 30px #b967ff,0 0 6px #000;margin:0 0 6px;text-align:center;}
+  .sub{opacity:.7;letter-spacing:2px;margin-bottom:24px;text-align:center;font-size:13px;}
+  .wrap{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap;justify-content:center;}
+  #board{border:3px solid #4a2a7a;background:#0c0818;box-shadow:0 0 30px rgba(185,103,255,.25);}
+  .panel{width:150px;display:flex;flex-direction:column;gap:16px;}
+  .box{border:2px solid #3a2a5a;background:rgba(20,10,30,0.55);padding:12px;text-align:center;}
+  .box h3{margin:0 0 8px;font-size:12px;letter-spacing:2px;color:#5bd6ff;}
+  .box .val{font-size:22px;color:#fff;}
+  #next{background:#0c0818;border:1px solid #4a2a7a;}
+  .keys{font-size:11px;line-height:1.8;color:#c9b8e8;text-align:left;}
+  .keys b{color:#b967ff;}
+  a.back{color:#5bd6ff;text-decoration:none;font-size:12px;letter-spacing:2px;margin-top:20px;opacity:.8;}
+  a.back:hover{opacity:1;}
+  #overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:10;
+  }
+  #overlay.show{display:flex;}
+  #overlay h2{color:#ff4444;letter-spacing:6px;font-size:34px;text-shadow:0 0 20px #ff4444;margin:0;}
+  #overlay p{color:#e8c96a;font-size:14px;}
+  #overlay button{
+    font-family:inherit;font-size:14px;letter-spacing:2px;padding:10px 24px;
+    background:#7a2ec0;color:#fff;border:2px solid #b967ff;cursor:pointer;
+  }
+  #overlay button:hover{background:#9a3ee0;}
+</style>
+</head>
+<body>
+  <h1>TETRIS</h1>
+  <div class="sub">clear lines, don't stack up</div>
+  <div class="wrap">
+    <canvas id="board" width="300" height="600"></canvas>
+    <div class="panel">
+      <div class="box"><h3>SCORE</h3><div class="val" id="score">0</div></div>
+      <div class="box"><h3>LEVEL</h3><div class="val" id="level">1</div></div>
+      <div class="box"><h3>LINES</h3><div class="val" id="lines">0</div></div>
+      <div class="box"><h3>NEXT</h3><canvas id="next" width="100" height="100"></canvas></div>
+      <div class="box keys">
+        <b>&larr;&rarr;</b> move<br>
+        <b>&uarr;</b> rotate<br>
+        <b>&darr;</b> soft drop<br>
+        <b>space</b> hard drop<br>
+        <b>p</b> pause
+      </div>
+    </div>
+  </div>
+  <a class="back" href="index.html">&larr; BACK TO ARCADE</a>
+
+  <div id="overlay">
+    <h2 id="overlayTitle">GAME OVER</h2>
+    <p id="overlayMsg">final score: 0</p>
+    <button id="overlayBtn">PLAY AGAIN</button>
+  </div>
+
+<script>
+(function(){
+  const COLS = 10, ROWS = 20, CELL = 30;
+  const ctx = document.getElementById('board').getContext('2d');
+  const nctx = document.getElementById('next').getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const levelEl = document.getElementById('level');
+  const linesEl = document.getElementById('lines');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlayMsg = document.getElementById('overlayMsg');
+  const overlayBtn = document.getElementById('overlayBtn');
+
+  const SHAPES = {
+    I: {m:[[1,1,1,1]], c:'#5bd6ff'},
+    O: {m:[[1,1],[1,1]], c:'#ffe14d'},
+    T: {m:[[0,1,0],[1,1,1]], c:'#b967ff'},
+    S: {m:[[0,1,1],[1,1,0]], c:'#4dff88'},
+    Z: {m:[[1,1,0],[0,1,1]], c:'#ff4d4d'},
+    J: {m:[[1,0,0],[1,1,1]], c:'#4d7fff'},
+    L: {m:[[0,0,1],[1,1,1]], c:'#ff9d4d'},
+  };
+  const KEYS = Object.keys(SHAPES);
+
+  let grid, current, next, score, level, lines, dropInterval, dropTimer, lastTime, paused, gameOver, bag;
+
+  function newBag(){
+    let arr = KEYS.slice();
+    for(let i=arr.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i],arr[j]]=[arr[j],arr[i]];
+    }
+    return arr;
+  }
+
+  function nextFromBag(){
+    if(!bag || bag.length===0) bag = newBag();
+    return bag.pop();
+  }
+
+  function spawnPiece(key){
+    const s = SHAPES[key];
+    const m = s.m.map(r=>r.slice());
+    return { key, m, color: s.c, row: 0, col: Math.floor((COLS - m[0].length)/2) };
+  }
+
+  function init(){
+    grid = Array.from({length:ROWS}, ()=>Array(COLS).fill(null));
+    bag = newBag();
+    current = spawnPiece(nextFromBag());
+    next = spawnPiece(nextFromBag());
+    score = 0; level = 1; lines = 0;
+    dropInterval = 800;
+    lastTime = 0; dropTimer = 0;
+    paused = false; gameOver = false;
+    updateHUD();
+    overlay.classList.remove('show');
+  }
+
+  function updateHUD(){
+    scoreEl.textContent = score;
+    levelEl.textContent = level;
+    linesEl.textContent = lines;
+  }
+
+  function collides(m, row, col){
+    for(let r=0;r<m.length;r++){
+      for(let c=0;c<m[r].length;c++){
+        if(!m[r][c]) continue;
+        const gr = row+r, gc = col+c;
+        if(gc<0 || gc>=COLS || gr>=ROWS) return true;
+        if(gr>=0 && grid[gr][gc]) return true;
+      }
+    }
+    return false;
+  }
+
+  function rotate(m){
+    const rows = m.length, cols = m[0].length;
+    const res = Array.from({length:cols}, ()=>Array(rows).fill(0));
+    for(let r=0;r<rows;r++)
+      for(let c=0;c<cols;c++)
+        res[c][rows-1-r] = m[r][c];
+    return res;
+  }
+
+  function tryRotate(){
+    if(gameOver||paused) return;
+    const rotated = rotate(current.m);
+    const kicks = [0,-1,1,-2,2];
+    for(const k of kicks){
+      if(!collides(rotated, current.row, current.col+k)){
+        current.m = rotated;
+        current.col += k;
+        return;
+      }
+    }
+  }
+
+  function lockPiece(){
+    const m = current.m;
+    for(let r=0;r<m.length;r++){
+      for(let c=0;c<m[r].length;c++){
+        if(m[r][c]){
+          const gr = current.row+r, gc = current.col+c;
+          if(gr<0){ endGame(); return; }
+          grid[gr][gc] = current.color;
+        }
+      }
+    }
+    clearLines();
+    current = next;
+    next = spawnPiece(nextFromBag());
+    if(collides(current.m, current.row, current.col)){
+      endGame();
+    }
+  }
+
+  function clearLines(){
+    let cleared = 0;
+    for(let r=ROWS-1;r>=0;r--){
+      if(grid[r].every(cell=>cell)){
+        grid.splice(r,1);
+        grid.unshift(Array(COLS).fill(null));
+        cleared++;
+        r++;
+      }
+    }
+    if(cleared>0){
+      const points = [0,100,300,500,800][cleared] * level;
+      score += points;
+      lines += cleared;
+      const newLevel = Math.floor(lines/10)+1;
+      if(newLevel !== level){
+        level = newLevel;
+        dropInterval = Math.max(100, 800 - (level-1)*70);
+      }
+      updateHUD();
+    }
+  }
+
+  function moveDown(){
+    if(!collides(current.m, current.row+1, current.col)){
+      current.row++;
+      return true;
+    } else {
+      lockPiece();
+      return false;
+    }
+  }
+
+  function hardDrop(){
+    if(gameOver||paused) return;
+    while(!collides(current.m, current.row+1, current.col)) current.row++;
+    lockPiece();
+    dropTimer = 0;
+  }
+
+  function endGame(){
+    gameOver = true;
+    overlayTitle.textContent = 'GAME OVER';
+    overlayMsg.textContent = 'final score: ' + score;
+    overlayBtn.textContent = 'PLAY AGAIN';
+    overlay.classList.add('show');
+  }
+
+  function togglePause(){
+    if(gameOver) return;
+    paused = !paused;
+    if(paused){
+      overlayTitle.textContent = 'PAUSED';
+      overlayMsg.textContent = 'score: ' + score;
+      overlayBtn.textContent = 'RESUME';
+      overlay.classList.add('show');
+    } else {
+      overlay.classList.remove('show');
+    }
+  }
+
+  function drawCell(c, x, y, color, size){
+    c.fillStyle = color;
+    c.fillRect(x, y, size, size);
+    c.strokeStyle = 'rgba(0,0,0,0.4)';
+    c.lineWidth = 2;
+    c.strokeRect(x+1, y+1, size-2, size-2);
+    c.fillStyle = 'rgba(255,255,255,0.15)';
+    c.fillRect(x+2, y+2, size-4, 4);
+  }
+
+  function draw(){
+    ctx.fillStyle = '#0c0818';
+    ctx.fillRect(0,0,COLS*CELL,ROWS*CELL);
+    ctx.strokeStyle = 'rgba(90,60,140,0.15)';
+    for(let c=1;c<COLS;c++){ ctx.beginPath(); ctx.moveTo(c*CELL,0); ctx.lineTo(c*CELL,ROWS*CELL); ctx.stroke(); }
+    for(let r=1;r<ROWS;r++){ ctx.beginPath(); ctx.moveTo(0,r*CELL); ctx.lineTo(COLS*CELL,r*CELL); ctx.stroke(); }
+
+    for(let r=0;r<ROWS;r++)
+      for(let c=0;c<COLS;c++)
+        if(grid[r][c]) drawCell(ctx, c*CELL, r*CELL, grid[r][c], CELL);
+
+    if(current){
+      const m = current.m;
+      for(let r=0;r<m.length;r++)
+        for(let c=0;c<m[r].length;c++)
+          if(m[r][c] && current.row+r>=0)
+            drawCell(ctx, (current.col+c)*CELL, (current.row+r)*CELL, current.color, CELL);
+    }
+
+    nctx.fillStyle = '#0c0818';
+    nctx.fillRect(0,0,100,100);
+    if(next){
+      const m = next.m;
+      const size = 22;
+      const offX = (100 - m[0].length*size)/2;
+      const offY = (100 - m.length*size)/2;
+      for(let r=0;r<m.length;r++)
+        for(let c=0;c<m[r].length;c++)
+          if(m[r][c]) drawCell(nctx, offX+c*size, offY+r*size, next.color, size);
+    }
+  }
+
+  function loop(t){
+    if(!lastTime) lastTime = t;
+    const dt = t - lastTime;
+    lastTime = t;
+    if(!paused && !gameOver){
+      dropTimer += dt;
+      if(dropTimer > dropInterval){
+        moveDown();
+        dropTimer = 0;
+      }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'p' || e.key === 'P'){ togglePause(); e.preventDefault(); return; }
+    if(gameOver || paused) return;
+    switch(e.key){
+      case 'ArrowLeft':
+        if(!collides(current.m, current.row, current.col-1)) current.col--;
+        e.preventDefault(); break;
+      case 'ArrowRight':
+        if(!collides(current.m, current.row, current.col+1)) current.col++;
+        e.preventDefault(); break;
+      case 'ArrowDown':
+        moveDown(); dropTimer = 0;
+        e.preventDefault(); break;
+      case 'ArrowUp':
+        tryRotate();
+        e.preventDefault(); break;
+      case ' ':
+        hardDrop();
+        e.preventDefault(); break;
+    }
+  });
+
+  overlayBtn.addEventListener('click', ()=>{
+    if(paused){ togglePause(); }
+    else { init(); }
+  });
+
+  init();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
